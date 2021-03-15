@@ -22,11 +22,11 @@ class SimpleChat:
         self.selector.register(fileobj=self.main_socket, events=selectors.EVENT_READ, data=self.on_accept)
 
         self.peers = {}
-        self.logger = logging.getLogger("")
+        self.logging = logging.getLogger("")
 
     def on_accept(self, sock, mask):
         conn, addr = self.main_socket.accept()
-        logger.info(f'accepted connection from {addr}')
+        logging.info(f'accepted connection from {addr}')
         conn.setblocking(False)
 
         self.peers[addr] = conn
@@ -35,7 +35,7 @@ class SimpleChat:
     def on_close(self, conn):
         addr = conn.getpeername()
         conn = self.peers[addr]
-        logger.info(f'closing connection to {addr}')
+        logging.info(f'closing connection to {addr}')
         self.peers.pop(addr)
         self.selector.unregister(conn)
         conn.close()
@@ -45,7 +45,7 @@ class SimpleChat:
             data = conn.recv(1024)
             if data:
                 peername = conn.getpeername()
-                logger.info(f'got data from {peername}')
+                logging.info(f'got data from {peername}')
                 for peer in self.peers.values():
                     if peer != conn:
                         peer.send(data)
@@ -56,7 +56,7 @@ class SimpleChat:
 
     def run_forever(self):
         last_report_time = time.time()
-        logger.info('starting')
+        logging.info('starting')
 
         while True:
             events = self.selector.select(timeout=0.05)
@@ -67,7 +67,7 @@ class SimpleChat:
 
             current_time = time.time()
             if current_time - last_report_time > 5:
-                logger.info(f'Num active peers = {len(self.peers)}')
+                logging.info(f'Num active peers = {len(self.peers)}')
                 last_report_time = current_time
 
 
