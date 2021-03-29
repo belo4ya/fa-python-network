@@ -17,9 +17,11 @@ class Package:
     @classmethod
     def from_bytes(cls, data: bytes) -> "Package":
         status = cls._decode_fixed_length_header(data[:cls.STATUS_LEN])
+        print(f"status: {status}")
         data = data[cls.STATUS_LEN:]
 
         headers_len = cls._decode_fixed_length_header(data[:cls.HEADER_LEN])
+        print(f"headers_len: {headers_len}")
         data = data[cls.HEADER_LEN:]
 
         headers = cls.json_decode(data[:headers_len])
@@ -55,6 +57,7 @@ class Package:
 
     @staticmethod
     def _decode_fixed_length_header(bytes_obj):
+        print(bytes_obj)
         return struct.unpack(">H", bytes_obj)[0]
 
     @staticmethod

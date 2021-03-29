@@ -53,35 +53,63 @@ class Server(base.BaseTCPServer):
 
 class Handler(base.BaseTCPRequestHandler):
 
+    def handle(self):
+        request = self.get_request()
+
+        try:
+            response = self.authorization(request)
+            if not response:
+                response = self.handle_request(self.get_request())
+        except BaseError as e:
+            response = self.handle_error(e, 400)
+
+        return self.do_response(response)
+
+    def handle_request(self, request):
+        return request.to_bytes()
+
+    def handle_error(self, e, status=400):
+        status = e.status or status
+        return package.Package(status=status, content=e.message)
+
     def get_request(self):
-        self.raw_request = self.rfile.read(1024)
+        raw_request = self.rfile.read(1024)
         while True:
             data = self.rfile.read(1024)
             if not data:
                 break
 
-            self.raw_request += data
+            raw_request += data
 
-        return package.Package.from_bytes(self.raw_request)
+        print(raw_request)
+        return package.Package.from_bytes(raw_request)
 
-    def do_response(self):
+    def do_response(self, response: package.Package):
+        return self.wfile.write(response.to_bytes())
+
+    def authorization(self, request):
         try:
-            self.wfile.write(self.response.to_bytes())
-        except AttributeError:
-            self.wfile.write(package.Package(content="Hello, world!").to_bytes())
+            not_authorized = not self.is_authorized(request.headers, request.cookies)
+        except AuthorizationError as e:
+            return self.handle_error(e)
 
-    def log_in(self):
-        username = self.request.headers.get("username")
-        password = self.request.headers.get("password")
+        if not_authorized:
+            try:
+                self.do_log_in(request.headers, request.cookies)
+            except AuthorizationError as e:
+                return self.handle_error(e)
+
+    def do_log_in(self, headers, cookies):
+        username = headers.get("username")
+        password = headers.get("password")
 
         if username is None or password is None:
             raise AuthorizationError
 
         current_user = db.DataBase.session.query(db.User).filter_by(username=username).one_or_none()
         if current_user is None:
-            raise UsernameError
+            raise UserNotExistError
 
-        print(hashlib.md5("admin".encode()).hexdigest())
         if hashlib.md5(password.encode()).hexdigest() != current_user.password:
             raise PasswordError
 
@@ -94,21 +122,24 @@ class Handler(base.BaseTCPRequestHandler):
         db.DataBase.session.add(current_user)
         db.DataBase.session.commit()
 
-        self.response = package.Package(status=200,
-                                        headers={"session-token": session_token,
-                                                 "session-start": session_start.strftime("%H:%M:%S - %m.%d.%Y")},
-                                        content=f"Authorization is successful!\nWelcome, {username}")
+        return package.Package(status=200,
+                               content=f"Authorization is successful!\nWelcome, {username}",
+                               cookies={
+                                   **cookies,
+                                   "session-token": session_token,
+                                   "session-start": session_start.strftime("%H:%M:%S - %m.%d.%Y")
+                               })
 
-    def is_authorized(self):
-        session_time = 15 * 60
+    def is_authorized(self, headers, cookies):
+        session_timeout = 15 * 60
 
-        username = self.request.headers.get("username")
+        username = headers.get("username")
         if username is None:
-            raise UsernameError
+            raise UsernameIsNoneError
 
         current_user = db.DataBase.session.query(db.User).filter_by(username=username).one_or_none()
         if current_user is None:
-            raise UsernameError
+            raise UserNotExistError(username=username)
 
         session_token = current_user.session_token
         if session_token is None:
@@ -118,43 +149,49 @@ class Handler(base.BaseTCPRequestHandler):
         if session_start is None:
             return False
 
-        if datetime.datetime.now() - session_start > datetime.timedelta(seconds=session_time):
+        if datetime.datetime.now() - session_start > datetime.timedelta(seconds=session_timeout):
             return False
 
-        if session_token != self.request.cookies.get("session-token"):
+        if session_token != cookies.get("session-token"):
             return False
 
         return True
 
-    def handle(self):
-        self.request = self.get_request()
 
-        try:
-            if not self.is_authorized():
-                self.log_in()
-        except UsernameError:
-            self.response = package.Package(status=400, content="Username Error")
-            return self.do_response()
-        except PasswordError:
-            self.response = package.Package(status=400, content="Password Error")
-            return self.do_response()
-        except AuthorizationError:
-            self.response = package.Package(status=400, content="Authorization Error")
-            return self.do_response()
+class BaseError(Exception):
 
-        return self.do_response()
+    def __init__(self, message="", status=None):
+        self.message = message
+        self.status = status
 
 
-class AuthorizationError(Exception):
-    pass
+class AuthorizationError(BaseError):
+
+    def __init__(self, message="", username=None, password=None, status=400):
+        super(AuthorizationError, self).__init__(message, status)
+        self.username = username
+        self.password = password
 
 
-class UsernameError(AuthorizationError):
-    pass
+class UserNotExistError(AuthorizationError):
+    message = ""
+
+    def __init__(self, username):
+        super(UserNotExistError, self).__init__(message=self.message, username=username)
+
+
+class UsernameIsNoneError(AuthorizationError):
+    message = ""
+
+    def __init__(self):
+        super(UsernameIsNoneError, self).__init__(message=self.message)
 
 
 class PasswordError(AuthorizationError):
-    pass
+    message = ""
+
+    def __init__(self):
+        super(PasswordError, self).__init__(message=self.message)
 
 
 if __name__ == '__main__':
